@@ -18,6 +18,12 @@
 
 package org.apache.flink.cep.operator;
 
+import static org.apache.flink.util.Preconditions.checkNotNull;
+
+import java.io.Serializable;
+import java.util.List;
+import java.util.Set;
+
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
@@ -40,13 +46,7 @@ import org.apache.flink.api.common.state.ReducingState;
 import org.apache.flink.api.common.state.ReducingStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
-import org.apache.flink.metrics.MetricGroup;
-
-import java.io.Serializable;
-import java.util.List;
-import java.util.Set;
-
-import static org.apache.flink.util.Preconditions.checkNotNull;
+import org.apache.flink.metrics.groups.OperatorMetricGroup;
 
 /**
  * A wrapper class for the {@link RuntimeContext}.
@@ -75,7 +75,7 @@ class CepRuntimeContext implements RuntimeContext {
     }
 
     @Override
-    public MetricGroup getMetricGroup() {
+    public OperatorMetricGroup getMetricGroup() {
         return runtimeContext.getMetricGroup();
     }
 

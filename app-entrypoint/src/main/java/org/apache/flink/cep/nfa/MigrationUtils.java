@@ -94,7 +94,7 @@ class MigrationUtils {
     }
 
     static <T> Queue<ComputationState> deserializeComputationStates(
-            org.apache.flink.cep.nfa.SharedBuffer<T> sharedBuffer,
+            SharedBuffer<T> sharedBuffer,
             TypeSerializer<T> eventSerializer,
             DataInputView source)
             throws IOException {
@@ -131,7 +131,7 @@ class MigrationUtils {
 
             computationStates.add(
                     ComputationState.createState(
-                            state, nodeId, version, startTimestamp, startEventId));
+                            state, nodeId, version, startTimestamp, -1L, startEventId));
         }
         return computationStates;
     }
