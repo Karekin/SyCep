@@ -8,11 +8,11 @@ import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 
-import cep.CEP;
-import cep.PatternSelectFunction;
-import cep.PatternStream;
-import cep.pattern.Pattern;
-import cep.pattern.conditions.IterativeCondition;
+import org.apache.flink.cep.CEP;
+import org.apache.flink.cep.PatternSelectFunction;
+import org.apache.flink.cep.PatternStream;
+import org.apache.flink.cep.pattern.Pattern;
+import org.apache.flink.cep.pattern.conditions.IterativeCondition;
 
 /**
  * @author StephenYou
@@ -87,7 +87,7 @@ public class DemoApp {
                 return pattern;
             }
         }).print();
-        env.execute("cep");
+        env.execute("org/apache/flink/cep");
     }
 
 }
