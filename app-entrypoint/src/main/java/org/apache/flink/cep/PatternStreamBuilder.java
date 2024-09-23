@@ -18,12 +18,20 @@
 
 package org.apache.flink.cep;
 
+import static org.apache.flink.util.Preconditions.checkNotNull;
+
+import java.util.Map;
+
+import javax.annotation.Nullable;
+
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.functions.NullByteKeySelector;
+
+import org.apache.flink.cep.functions.DynamicPatternFunction;
 import org.apache.flink.cep.functions.PatternProcessFunction;
 import org.apache.flink.cep.functions.TimedOutPartialMatchHandler;
 import org.apache.flink.cep.nfa.compiler.NFACompiler;
@@ -35,12 +43,6 @@ import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
 
-import javax.annotation.Nullable;
-
-import java.util.Map;
-
-import static org.apache.flink.util.Preconditions.checkNotNull;
-
 /** Utility method for creating {@link PatternStream}. */
 @Internal
 final class PatternStreamBuilder<IN> {
@@ -48,6 +50,8 @@ final class PatternStreamBuilder<IN> {
     private final DataStream<IN> inputStream;
 
     private final Pattern<IN, ?> pattern;
+
+    private final DynamicPatternFunction patternFunction;
 
     private final EventComparator<IN> comparator;
 
@@ -83,6 +87,21 @@ final class PatternStreamBuilder<IN> {
         this.timeBehaviour = checkNotNull(timeBehaviour);
         this.comparator = comparator;
         this.lateDataOutputTag = lateDataOutputTag;
+        this.patternFunction = null;
+    }
+
+    private PatternStreamBuilder(
+            final DataStream<IN> inputStream,
+            final DynamicPatternFunction patternFunction,
+            final TimeBehaviour timeBehaviour,
+            @Nullable final EventComparator<IN> comparator,
+            @Nullable final OutputTag<IN> lateDataOutputTag) {
+        this.inputStream = checkNotNull(inputStream);
+        this.patternFunction = checkNotNull(patternFunction);
+        this.timeBehaviour = checkNotNull(timeBehaviour);
+        this.comparator = comparator;
+        this.lateDataOutputTag = lateDataOutputTag;
+        this.pattern = null;
     }
 
     TypeInformation<IN> getInputType() {
@@ -145,15 +164,26 @@ final class PatternStreamBuilder<IN> {
         final NFACompiler.NFAFactory<IN> nfaFactory =
                 NFACompiler.compileFactory(pattern, timeoutHandling);
 
-        final CepOperator<IN, K, OUT> operator =
-                new CepOperator<>(
-                        inputSerializer,
-                        isProcessingTime,
-                        nfaFactory,
-                        comparator,
-                        pattern.getAfterMatchSkipStrategy(),
-                        processFunction,
-                        lateDataOutputTag);
+        CepOperator<IN, K, OUT> operator = null;
+        if (patternFunction == null ) {
+            operator = new CepOperator<>(
+                    inputSerializer,
+                    isProcessingTime,
+                    nfaFactory,
+                    comparator,
+                    pattern.getAfterMatchSkipStrategy(),
+                    processFunction,
+                    lateDataOutputTag);
+        } else {
+            operator = new CepOperator<>(
+                    inputSerializer,
+                    isProcessingTime,
+                    patternFunction,
+                    comparator,
+                    null,
+                    processFunction,
+                    lateDataOutputTag);
+        }
 
         final SingleOutputStreamOperator<OUT> patternStream;
         if (inputStream instanceof KeyedStream) {
@@ -180,5 +210,11 @@ final class PatternStreamBuilder<IN> {
             final DataStream<IN> inputStream, final Pattern<IN, ?> pattern) {
         return new PatternStreamBuilder<>(
                 inputStream, pattern, TimeBehaviour.EventTime, null, null);
+    }
+
+    static <IN> PatternStreamBuilder<IN> forStreamAndPatternFunction(
+            final DataStream<IN> inputStream, final DynamicPatternFunction patternFunction) {
+        return new PatternStreamBuilder<>(
+                inputStream, patternFunction, TimeBehaviour.EventTime, null, null);
     }
 }

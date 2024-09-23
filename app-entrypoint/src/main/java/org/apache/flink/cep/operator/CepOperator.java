@@ -18,9 +18,23 @@
 
 package org.apache.flink.cep.operator;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
+
+import javax.annotation.Nullable;
+
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.functions.util.FunctionUtils;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.state.MapStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
@@ -30,8 +44,7 @@ import org.apache.flink.api.common.typeutils.base.ListSerializer;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.cep.EventComparator;
-import org.apache.flink.cep.functions.PatternProcessFunction;
-import org.apache.flink.cep.functions.TimedOutPartialMatchHandler;
+import org.apache.flink.cep.functions.DynamicPatternFunction;
 import org.apache.flink.cep.nfa.NFA;
 import org.apache.flink.cep.nfa.NFAState;
 import org.apache.flink.cep.nfa.NFAStateSerializer;
@@ -39,10 +52,12 @@ import org.apache.flink.cep.nfa.aftermatch.AfterMatchSkipStrategy;
 import org.apache.flink.cep.nfa.compiler.NFACompiler;
 import org.apache.flink.cep.nfa.sharedbuffer.SharedBuffer;
 import org.apache.flink.cep.nfa.sharedbuffer.SharedBufferAccessor;
+import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.time.TimerService;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.runtime.state.StateInitializationContext;
+import org.apache.flink.runtime.state.StateSnapshotContext;
 import org.apache.flink.runtime.state.VoidNamespace;
 import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import org.apache.flink.streaming.api.graph.StreamConfig;
@@ -58,15 +73,9 @@ import org.apache.flink.streaming.runtime.tasks.StreamTask;
 import org.apache.flink.util.OutputTag;
 import org.apache.flink.util.Preconditions;
 
-import javax.annotation.Nullable;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.PriorityQueue;
-import java.util.stream.Stream;
+import org.apache.flink.cep.configuration.SharedBufferCacheConfig;
+import org.apache.flink.cep.functions.PatternProcessFunction;
+import org.apache.flink.cep.functions.TimedOutPartialMatchHandler;
 
 /**
  * CEP pattern operator for a keyed input stream. For each key, the operator creates a {@link NFA}
@@ -95,8 +104,15 @@ public class CepOperator<IN, KEY, OUT>
     private static final String NFA_STATE_NAME = "nfaStateName";
     private static final String EVENT_QUEUE_STATE_NAME = "eventQueuesStateName";
 
-    private final NFACompiler.NFAFactory<IN> nfaFactory;
+    private NFACompiler.NFAFactory<IN> nfaFactory;
 
+    private final DynamicPatternFunction patternFunction;
+
+    ListState<Integer> refreshFlagState; //nfa 的version 需要持久化
+    private AtomicInteger refreshVersion;  //    刷新nfa的version
+    private ValueState<Integer> needRefresh; //  每一个key 对应一个version
+
+    private ListState<Long> registerTimeState;// 注册定时器存储的时间
     private transient ValueState<NFAState> computationStates;
     private transient MapState<Long, List<IN>> elementQueueState;
     private transient SharedBuffer<IN> partialMatches;
@@ -115,7 +131,7 @@ public class CepOperator<IN, KEY, OUT>
     private final OutputTag<IN> lateDataOutputTag;
 
     /** Strategy which element to skip after a match was found. */
-    private final AfterMatchSkipStrategy afterMatchSkipStrategy;
+    private AfterMatchSkipStrategy afterMatchSkipStrategy;
 
     /** Context passed to user function. */
     private transient ContextFunctionImpl context;
@@ -134,6 +150,30 @@ public class CepOperator<IN, KEY, OUT>
     // ------------------------------------------------------------------------
 
     private transient Counter numLateRecordsDropped;
+
+    public CepOperator(
+            final TypeSerializer<IN> inputSerializer,
+            final boolean isProcessingTime,
+            final DynamicPatternFunction patternFunction,
+            @Nullable final EventComparator<IN> comparator,
+            @Nullable final AfterMatchSkipStrategy afterMatchSkipStrategy,
+            final PatternProcessFunction<IN, OUT> function,
+            @Nullable final OutputTag<IN> lateDataOutputTag) {
+        super(function);
+
+        this.inputSerializer = Preconditions.checkNotNull(inputSerializer);
+        this.patternFunction = patternFunction;
+        this.isProcessingTime = isProcessingTime;
+        this.comparator = comparator;
+        this.lateDataOutputTag = lateDataOutputTag;
+
+        if (afterMatchSkipStrategy == null) {
+            this.afterMatchSkipStrategy = AfterMatchSkipStrategy.noSkip();
+        } else {
+            this.afterMatchSkipStrategy = afterMatchSkipStrategy;
+        }
+        this.nfaFactory = null;
+    }
 
     public CepOperator(
             final TypeSerializer<IN> inputSerializer,
@@ -157,6 +197,7 @@ public class CepOperator<IN, KEY, OUT>
         } else {
             this.afterMatchSkipStrategy = afterMatchSkipStrategy;
         }
+        this.patternFunction = null;
     }
 
     @Override
@@ -173,6 +214,26 @@ public class CepOperator<IN, KEY, OUT>
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
+        //初始化状态
+        if (patternFunction != null) {
+            /**
+             * 两个标识位状态
+             */
+            refreshFlagState = context.getOperatorStateStore()
+                    .getUnionListState(new ListStateDescriptor<Integer>("refreshFlagState", Integer.class));
+            if (context.isRestored()) {
+                if (refreshFlagState.get().iterator().hasNext()) {
+                    refreshVersion = new AtomicInteger(refreshFlagState.get().iterator().next());
+                }
+            } else {
+                refreshVersion = new AtomicInteger(0);
+            }
+            needRefresh = context.getKeyedStateStore()
+                    .getState(new ValueStateDescriptor<Integer>("needRefreshState", Integer.class, 0));
+            registerTimeState = context.getKeyedStateStore()
+                    .getListState(new ListStateDescriptor<Long>("registerTimeState", Long.class));
+        }
+
         // initializeState through the provided context
         computationStates =
                 context.getKeyedStateStore()
@@ -180,7 +241,11 @@ public class CepOperator<IN, KEY, OUT>
                                 new ValueStateDescriptor<>(
                                         NFA_STATE_NAME, new NFAStateSerializer()));
 
-        partialMatches = new SharedBuffer<>(context.getKeyedStateStore(), inputSerializer);
+        partialMatches =
+                new SharedBuffer<>(
+                        context.getKeyedStateStore(),
+                        inputSerializer,
+                        SharedBufferCacheConfig.of(getOperatorConfig().getConfiguration()));
 
         elementQueueState =
                 context.getKeyedStateStore()
@@ -196,11 +261,35 @@ public class CepOperator<IN, KEY, OUT>
     }
 
     @Override
+    public void snapshotState(StateSnapshotContext context) throws Exception {
+        super.snapshotState(context);
+        if(patternFunction != null){
+            refreshFlagState.clear();
+            refreshFlagState.add(refreshVersion.get());
+        }
+    }
+
+    @Override
     public void open() throws Exception {
         super.open();
         timerService =
                 getInternalTimerService(
                         "watermark-callbacks", VoidNamespaceSerializer.INSTANCE, this);
+
+        //初始化
+        if (patternFunction != null) {
+            patternFunction.init();
+            Pattern pattern = patternFunction.inject();
+            afterMatchSkipStrategy = pattern.getAfterMatchSkipStrategy();
+            boolean timeoutHandling = getUserFunction() instanceof TimedOutPartialMatchHandler;
+            nfaFactory = NFACompiler.compileFactory(pattern, timeoutHandling);
+            long period = patternFunction.getPeriod();
+            // 注册定时器检测规则是否变更
+            if (period > 0) {
+                getProcessingTimeService().registerTimer(timerService.currentProcessingTime() + period, this::onProcessingTime);
+            }
+        }
+
 
         nfa = nfaFactory.createNFA();
         nfa.open(cepRuntimeContext, new Configuration());
@@ -213,16 +302,77 @@ public class CepOperator<IN, KEY, OUT>
         this.numLateRecordsDropped = metrics.counter(LATE_ELEMENTS_DROPPED_METRIC_NAME);
     }
 
+    private void onProcessingTime(long time) throws Exception {
+        //先检查是否变更
+        if (patternFunction.isChanged()) {
+            //重新注入
+            Pattern pattern = patternFunction.inject();
+            afterMatchSkipStrategy = pattern.getAfterMatchSkipStrategy();
+            boolean timeoutHandling = getUserFunction() instanceof TimedOutPartialMatchHandler;
+            nfaFactory = NFACompiler.compileFactory(pattern, timeoutHandling);
+
+            nfa = nfaFactory.createNFA();
+            nfa.open(cepRuntimeContext, new Configuration());
+
+            //刷新版本号
+            refreshVersion.incrementAndGet();
+        }
+        //重新注册
+        if (patternFunction.getPeriod() > 0) {
+            getProcessingTimeService().registerTimer(timerService.currentProcessingTime() + patternFunction.getPeriod(), this::onProcessingTime);
+//            getProcessingTimeService().registerTimer(timerService.currentWatermark() + patternFunction.getPeriod(), this::onProcessingTime);
+        }
+    }
+
+
+    //processElement中排序与事件时间处理逻辑中增加saveRegisterTime方法
+    //time 表示触发的时间
+    private void saveRegisterTime(long time) throws Exception {
+        if(patternFunction != null) {
+            registerTimeState.add(time);
+        }
+    }
+
     @Override
     public void close() throws Exception {
         super.close();
         if (nfa != null) {
             nfa.close();
         }
+        if (partialMatches != null) {
+            partialMatches.releaseCacheStatisticsTimer();
+        }
     }
 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
+
+        if (patternFunction != null) {
+            // 规则版本更新
+            if (needRefresh.value() < refreshVersion.get()) {
+                //清除状态
+                computationStates.clear();
+                elementQueueState.clear();
+                partialMatches.releaseCacheStatisticsTimer();
+                //清除定时器
+                Iterable<Long> registerTime = registerTimeState.get();
+                if (registerTime != null) {
+                    Iterator<Long> iterator = registerTime.iterator();
+                    while (iterator.hasNext()) {
+                        Long l = iterator.next();
+                        //删除定时器
+                        timerService.deleteEventTimeTimer(VoidNamespace.INSTANCE, l);
+                        timerService.deleteProcessingTimeTimer(VoidNamespace.INSTANCE, l);
+                        //状态清理
+                        iterator.remove();
+                    }
+                }
+                //更新当前的版本
+                needRefresh.update(refreshVersion.get());
+            }
+        }
+
+
         if (isProcessingTime) {
             if (comparator == null) {
                 // there can be no out of order elements in processing time
@@ -234,9 +384,6 @@ public class CepOperator<IN, KEY, OUT>
             } else {
                 long currentTime = timerService.currentProcessingTime();
                 bufferEvent(element.getValue(), currentTime);
-
-                // register a timer for the next millisecond to sort and emit buffered data
-                timerService.registerProcessingTimeTimer(VoidNamespace.INSTANCE, currentTime + 1);
             }
 
         } else {
@@ -254,8 +401,6 @@ public class CepOperator<IN, KEY, OUT>
                 // we have an event with a valid timestamp, so
                 // we buffer it until we receive the proper watermark.
 
-                saveRegisterWatermarkTimer();
-
                 bufferEvent(value, timestamp);
 
             } else if (lateDataOutputTag != null) {
@@ -266,16 +411,11 @@ public class CepOperator<IN, KEY, OUT>
         }
     }
 
-    /**
-     * Registers a timer for {@code current watermark + 1}, this means that we get triggered
-     * whenever the watermark advances, which is what we want for working off the queue of buffered
-     * elements.
-     */
-    private void saveRegisterWatermarkTimer() {
-        long currentWatermark = timerService.currentWatermark();
-        // protect against overflow
-        if (currentWatermark + 1 > currentWatermark) {
-            timerService.registerEventTimeTimer(VoidNamespace.INSTANCE, currentWatermark + 1);
+    private void registerTimer(long timestamp) {
+        if (isProcessingTime) {
+            timerService.registerProcessingTimeTimer(VoidNamespace.INSTANCE, timestamp + 1);
+        } else {
+            timerService.registerEventTimeTimer(VoidNamespace.INSTANCE, timestamp);
         }
     }
 
@@ -283,7 +423,9 @@ public class CepOperator<IN, KEY, OUT>
         List<IN> elementsForTimestamp = elementQueueState.get(currentTime);
         if (elementsForTimestamp == null) {
             elementsForTimestamp = new ArrayList<>();
+            registerTimer(currentTime);
         }
+        saveRegisterTime(currentTime);
 
         elementsForTimestamp.add(event);
         elementQueueState.put(currentTime, elementsForTimestamp);
@@ -309,6 +451,7 @@ public class CepOperator<IN, KEY, OUT>
                 && sortedTimestamps.peek() <= timerService.currentWatermark()) {
             long timestamp = sortedTimestamps.poll();
             advanceTime(nfaState, timestamp);
+            // 对事件按时间进行排序
             try (Stream<IN> elements = sort(elementQueueState.get(timestamp))) {
                 elements.forEachOrdered(
                         event -> {
@@ -327,10 +470,6 @@ public class CepOperator<IN, KEY, OUT>
 
         // STEP 4
         updateNFA(nfaState);
-
-        if (!sortedTimestamps.isEmpty() || !partialMatches.isEmpty()) {
-            saveRegisterWatermarkTimer();
-        }
     }
 
     @Override
@@ -363,6 +502,9 @@ public class CepOperator<IN, KEY, OUT>
         }
 
         // STEP 3
+        advanceTime(nfa, timerService.currentProcessingTime());
+
+        // STEP 4
         updateNFA(nfa);
     }
 
@@ -379,9 +521,11 @@ public class CepOperator<IN, KEY, OUT>
     private void updateNFA(NFAState nfaState) throws IOException {
         if (nfaState.isStateChanged()) {
             nfaState.resetStateChanged();
+            nfaState.resetNewStartPartialMatch();
             computationStates.update(nfaState);
         }
     }
+
 
     private PriorityQueue<Long> getSortedTimestamps() throws Exception {
         PriorityQueue<Long> sortedTimestamps = new PriorityQueue<>();
@@ -402,6 +546,7 @@ public class CepOperator<IN, KEY, OUT>
     private void processEvent(NFAState nfaState, IN event, long timestamp) throws Exception {
         try (SharedBufferAccessor<IN> sharedBufferAccessor = partialMatches.getAccessor()) {
             Collection<Map<String, List<IN>>> patterns =
+                    // nfa 处理数据
                     nfa.process(
                             sharedBufferAccessor,
                             nfaState,
@@ -409,6 +554,9 @@ public class CepOperator<IN, KEY, OUT>
                             timestamp,
                             afterMatchSkipStrategy,
                             cepTimerService);
+            if (nfa.getWindowTime() > 0 && nfaState.isNewStartPartialMatch()) {
+                registerTimer(timestamp + nfa.getWindowTime());
+            }
             processMatchedSequences(patterns, timestamp);
         }
     }
@@ -419,9 +567,24 @@ public class CepOperator<IN, KEY, OUT>
      * lead to pruning and timeouts.
      */
     private void advanceTime(NFAState nfaState, long timestamp) throws Exception {
+        saveRegisterTime(timestamp);
         try (SharedBufferAccessor<IN> sharedBufferAccessor = partialMatches.getAccessor()) {
-            Collection<Tuple2<Map<String, List<IN>>, Long>> timedOut =
-                    nfa.advanceTime(sharedBufferAccessor, nfaState, timestamp);
+            Tuple2<
+                            Collection<Map<String, List<IN>>>,
+                            Collection<Tuple2<Map<String, List<IN>>, Long>>>
+                    pendingMatchesAndTimeout =
+                            nfa.advanceTime(
+                                    sharedBufferAccessor,
+                                    nfaState,
+                                    timestamp,
+                                    afterMatchSkipStrategy);
+
+            Collection<Map<String, List<IN>>> pendingMatches = pendingMatchesAndTimeout.f0;
+            Collection<Tuple2<Map<String, List<IN>>, Long>> timedOut = pendingMatchesAndTimeout.f1;
+
+            if (!pendingMatches.isEmpty()) {
+                processMatchedSequences(pendingMatches, timestamp);
+            }
             if (!timedOut.isEmpty()) {
                 processTimedOutSequences(timedOut);
             }

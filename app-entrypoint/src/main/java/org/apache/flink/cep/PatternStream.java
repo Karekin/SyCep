@@ -18,12 +18,19 @@
 
 package org.apache.flink.cep;
 
+import static org.apache.flink.util.Preconditions.checkNotNull;
+
+import java.util.UUID;
+
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.EitherTypeInfo;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
+
+import org.apache.flink.cep.functions.DynamicPatternFunction;
 import org.apache.flink.cep.functions.PatternProcessFunction;
 import org.apache.flink.cep.functions.TimedOutPartialMatchHandler;
+import org.apache.flink.cep.nfa.NFA;
 import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
@@ -31,16 +38,10 @@ import org.apache.flink.streaming.api.functions.co.CoMapFunction;
 import org.apache.flink.types.Either;
 import org.apache.flink.util.OutputTag;
 
-import java.util.UUID;
-
-import static org.apache.flink.cep.PatternProcessFunctionBuilder.fromFlatSelect;
-import static org.apache.flink.cep.PatternProcessFunctionBuilder.fromSelect;
-import static org.apache.flink.util.Preconditions.checkNotNull;
-
 /**
  * Stream abstraction for CEP pattern detection. A pattern stream is a stream which emits detected
  * pattern sequences as a map of events associated with their names. The pattern is detected using a
- * {@link org.apache.flink.cep.nfa.NFA}. In order to process the detected sequences, the user has to
+ * {@link NFA}. In order to process the detected sequences, the user has to
  * specify a {@link PatternSelectFunction} or a {@link PatternFlatSelectFunction}.
  *
  * <p>Additionally it allows to handle partially matched event patterns which have timed out. For
@@ -50,6 +51,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @param <T> Type of the events
  */
 public class PatternStream<T> {
+    PatternStream(final DataStream<T> inputStream, DynamicPatternFunction<T> dynamicPatternFunction) throws Exception {
+        this(PatternStreamBuilder.forStreamAndPatternFunction(inputStream, dynamicPatternFunction));
+    }
 
     private final PatternStreamBuilder<T> builder;
 
@@ -180,7 +184,7 @@ public class PatternStream<T> {
             final TypeInformation<R> outTypeInfo) {
 
         final PatternProcessFunction<T, R> processFunction =
-                fromSelect(builder.clean(patternSelectFunction)).build();
+                PatternProcessFunctionBuilder.fromSelect(builder.clean(patternSelectFunction)).build();
 
         return process(processFunction, outTypeInfo);
     }
@@ -266,7 +270,7 @@ public class PatternStream<T> {
             final PatternSelectFunction<T, R> patternSelectFunction) {
 
         final PatternProcessFunction<T, R> processFunction =
-                fromSelect(builder.clean(patternSelectFunction))
+                PatternProcessFunctionBuilder.fromSelect(builder.clean(patternSelectFunction))
                         .withTimeoutHandler(
                                 timedOutPartialMatchesTag, builder.clean(patternTimeoutFunction))
                         .build();
@@ -328,7 +332,7 @@ public class PatternStream<T> {
                 new OutputTag<>(UUID.randomUUID().toString(), timeoutTypeInfo);
 
         final PatternProcessFunction<T, R> processFunction =
-                fromSelect(builder.clean(patternSelectFunction))
+                PatternProcessFunctionBuilder.fromSelect(builder.clean(patternSelectFunction))
                         .withTimeoutHandler(outputTag, builder.clean(patternTimeoutFunction))
                         .build();
 
@@ -385,7 +389,7 @@ public class PatternStream<T> {
             final TypeInformation<R> outTypeInfo) {
 
         final PatternProcessFunction<T, R> processFunction =
-                fromFlatSelect(builder.clean(patternFlatSelectFunction)).build();
+                PatternProcessFunctionBuilder.fromFlatSelect(builder.clean(patternFlatSelectFunction)).build();
 
         return process(processFunction, outTypeInfo);
     }
@@ -471,7 +475,7 @@ public class PatternStream<T> {
             final PatternFlatSelectFunction<T, R> patternFlatSelectFunction) {
 
         final PatternProcessFunction<T, R> processFunction =
-                fromFlatSelect(builder.clean(patternFlatSelectFunction))
+                PatternProcessFunctionBuilder.fromFlatSelect(builder.clean(patternFlatSelectFunction))
                         .withTimeoutHandler(
                                 timedOutPartialMatchesTag,
                                 builder.clean(patternFlatTimeoutFunction))
@@ -532,7 +536,7 @@ public class PatternStream<T> {
                 new OutputTag<>(UUID.randomUUID().toString(), timedOutTypeInfo);
 
         final PatternProcessFunction<T, R> processFunction =
-                fromFlatSelect(builder.clean(patternFlatSelectFunction))
+                PatternProcessFunctionBuilder.fromFlatSelect(builder.clean(patternFlatSelectFunction))
                         .withTimeoutHandler(outputTag, builder.clean(patternFlatTimeoutFunction))
                         .build();
 

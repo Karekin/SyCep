@@ -18,6 +18,7 @@
 
 package org.apache.flink.cep;
 
+import org.apache.flink.cep.functions.DynamicPatternFunction;
 import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.streaming.api.datastream.DataStream;
 
@@ -27,6 +28,18 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  * <p>Methods which transform a {@link DataStream} into a {@link PatternStream} to do CEP.
  */
 public class CEP {
+    /***
+     * Dynamic injection pattern function
+     * @param input
+     * @param dynamicPatternFunction
+     * @return
+     * @param <T>
+     */
+    public static <T> PatternStream<T> injectionPattern(
+            DataStream<T> input,
+            DynamicPatternFunction<T> dynamicPatternFunction) throws Exception {
+        return new PatternStream<>(input, dynamicPatternFunction);
+    }
     /**
      * Creates a {@link PatternStream} from an input data stream and a pattern.
      *
