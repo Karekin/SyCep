@@ -34,7 +34,7 @@ import cep.pattern.conditions.IterativeCondition;
 public class DynamicPatternApp {
 
     //测试数据
-    private static final String filePath = "/Users/yqz/project/data.txt";
+    private static final String filePath = "/Users/apple/data/cep_data.txt";
 
     public static void main(String[] args) throws Exception {
         writeToTxt();
