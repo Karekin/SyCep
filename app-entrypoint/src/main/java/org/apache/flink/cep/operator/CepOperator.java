@@ -113,8 +113,8 @@ public class CepOperator<IN, KEY, OUT>
     private ValueState<Integer> dataKeyVersionState; //  每一个key 对应一个version
 
     private ListState<Long> registerTimeState;// 注册定时器存储的时间
-    private transient ValueState<NFAState> computationStates;
-    private transient MapState<Long, List<IN>> elementQueueState;
+    private transient ValueState<NFAState> computationStates;//nfaState缓存ckpt
+    private transient MapState<Long, List<IN>> elementQueueState;//event流缓存ckpt
     private transient SharedBuffer<IN> partialMatches;
 
     private transient InternalTimerService<VoidNamespace> timerService;
@@ -317,7 +317,7 @@ public class CepOperator<IN, KEY, OUT>
             //刷新版本号
             nfaVersionVar.incrementAndGet();
         }
-        //重新注册
+        //重新注册,下次继续进行check
         if (patternFunction.getPeriod() > 0) {
             getProcessingTimeService().registerTimer(timerService.currentProcessingTime() + patternFunction.getPeriod(), this::onProcessingTime);
 //            getProcessingTimeService().registerTimer(timerService.currentWatermark() + patternFunction.getPeriod(), this::onProcessingTime);
@@ -513,6 +513,11 @@ public class CepOperator<IN, KEY, OUT>
         return (comparator == null) ? stream : stream.sorted(comparator);
     }
 
+    /**
+     *
+     * @return 能够从哪些状态开始匹配
+     * @throws IOException
+     */
     private NFAState getNFAState() throws IOException {
         NFAState nfaState = computationStates.value();
         return nfaState != null ? nfaState : nfa.createInitialNFAState();

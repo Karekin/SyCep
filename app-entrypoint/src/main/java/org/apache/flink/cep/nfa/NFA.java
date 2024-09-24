@@ -364,6 +364,8 @@ public class NFA<T> {
             throws Exception {
 
         // 部分匹配的的事件
+        //newPartialMatches  装nfa匹配到一半没有结束数据，也就是半匹配，
+        //potentialMatches     装成功匹配完成的数据，用于返回，调用用户的方法去处理结果
         final PriorityQueue<ComputationState> newPartialMatches =
                 new PriorityQueue<>(NFAState.COMPUTATION_STATE_COMPARATOR);
         PriorityQueue<ComputationState> potentialMatches =
