@@ -108,9 +108,9 @@ public class CepOperator<IN, KEY, OUT>
 
     private final DynamicPatternFunction patternFunction;
 
-    ListState<Integer> refreshFlagState; //nfa 的version 需要持久化
-    private AtomicInteger refreshVersion;  //    刷新nfa的version
-    private ValueState<Integer> needRefresh; //  每一个key 对应一个version
+    ListState<Integer> nfaVersionState; //nfa 的version 需要持久化
+    private AtomicInteger nfaVersionVar;  //    刷新nfa的version
+    private ValueState<Integer> dataKeyVersionState; //  每一个key 对应一个version
 
     private ListState<Long> registerTimeState;// 注册定时器存储的时间
     private transient ValueState<NFAState> computationStates;
@@ -219,16 +219,16 @@ public class CepOperator<IN, KEY, OUT>
             /**
              * 两个标识位状态
              */
-            refreshFlagState = context.getOperatorStateStore()
+            nfaVersionState = context.getOperatorStateStore()
                     .getUnionListState(new ListStateDescriptor<Integer>("refreshFlagState", Integer.class));
             if (context.isRestored()) {
-                if (refreshFlagState.get().iterator().hasNext()) {
-                    refreshVersion = new AtomicInteger(refreshFlagState.get().iterator().next());
+                if (nfaVersionState.get().iterator().hasNext()) {
+                    nfaVersionVar = new AtomicInteger(nfaVersionState.get().iterator().next());
                 }
             } else {
-                refreshVersion = new AtomicInteger(0);
+                nfaVersionVar = new AtomicInteger(0);
             }
-            needRefresh = context.getKeyedStateStore()
+            dataKeyVersionState = context.getKeyedStateStore()
                     .getState(new ValueStateDescriptor<Integer>("needRefreshState", Integer.class, 0));
             registerTimeState = context.getKeyedStateStore()
                     .getListState(new ListStateDescriptor<Long>("registerTimeState", Long.class));
@@ -264,8 +264,8 @@ public class CepOperator<IN, KEY, OUT>
     public void snapshotState(StateSnapshotContext context) throws Exception {
         super.snapshotState(context);
         if(patternFunction != null){
-            refreshFlagState.clear();
-            refreshFlagState.add(refreshVersion.get());
+            nfaVersionState.clear();
+            nfaVersionState.add(nfaVersionVar.get());
         }
     }
 
@@ -315,7 +315,7 @@ public class CepOperator<IN, KEY, OUT>
             nfa.open(cepRuntimeContext, new Configuration());
 
             //刷新版本号
-            refreshVersion.incrementAndGet();
+            nfaVersionVar.incrementAndGet();
         }
         //重新注册
         if (patternFunction.getPeriod() > 0) {
@@ -349,7 +349,7 @@ public class CepOperator<IN, KEY, OUT>
 
         if (patternFunction != null) {
             // 规则版本更新
-            if (needRefresh.value() < refreshVersion.get()) {
+            if (dataKeyVersionState.value() < nfaVersionVar.get()) {
                 //清除状态
                 computationStates.clear();
                 elementQueueState.clear();
@@ -368,7 +368,7 @@ public class CepOperator<IN, KEY, OUT>
                     }
                 }
                 //更新当前的版本
-                needRefresh.update(refreshVersion.get());
+                dataKeyVersionState.update(nfaVersionVar.get());
             }
         }
 
