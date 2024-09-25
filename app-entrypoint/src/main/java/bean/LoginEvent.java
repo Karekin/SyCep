@@ -1,5 +1,6 @@
 package bean;
 
+
 /**
  * @program: SyCep
  * @description: 登录event
@@ -7,13 +8,13 @@ package bean;
  * @create: 2024-09-24
  */
 public class LoginEvent {
-    String status;
+   public String eventType;
 
-    public String getStatus() {
-        return status;
+    public String getEventType() {
+        return eventType;
     }
 
-    public void setStatus(String status) {
-        this.status = status;
+    public void setEventType(String eventType) {
+        this.eventType = eventType;
     }
 }
