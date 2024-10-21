@@ -1,5 +1,7 @@
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.net.URL;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Map;
@@ -34,7 +36,7 @@ import cep.pattern.conditions.IterativeCondition;
 public class DynamicPatternApp {
 
     //测试数据
-    private static final String filePath = "/Users/yqz/project/data.txt";
+    private static final String filePath = "data.txt";
 
     public static void main(String[] args) throws Exception {
         writeToTxt();
@@ -42,8 +44,17 @@ public class DynamicPatternApp {
         env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
         env.setParallelism(1);
 
+        // 使用类加载器获取 resources 目录下的文件路径
+        ClassLoader classLoader = DynamicPatternApp.class.getClassLoader();
+        URL resource = classLoader.getResource(filePath);
+        if (resource == null) {
+            throw new FileNotFoundException("File not found in resources folder.");
+        }
 
-        TextInputFormat format = new TextInputFormat(new Path(filePath));
+        // 将 URL 转换为 Path
+        TextInputFormat format = new TextInputFormat(new Path(resource.toURI()));
+
+//        TextInputFormat format = new TextInputFormat(new Path(filePath));
         format.setFilesFilter(FilePathFilter.createDefaultFilter());
         TypeInformation<String> typeInfo = BasicTypeInfo.STRING_TYPE_INFO;
         format.setCharsetName("UTF-8");
