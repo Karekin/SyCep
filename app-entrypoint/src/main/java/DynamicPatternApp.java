@@ -1,7 +1,6 @@
 import java.io.File;
 import java.io.FileOutputStream;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -19,12 +18,12 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.source.FileProcessingMode;
 
-import cep.CEP;
-import cep.PatternSelectFunction;
-import cep.PatternStream;
-import cep.functions.DynamicPatternFunction;
-import cep.pattern.Pattern;
-import cep.pattern.conditions.IterativeCondition;
+import org.apache.flink.cep.CEP;
+import org.apache.flink.cep.PatternSelectFunction;
+import org.apache.flink.cep.PatternStream;
+import org.apache.flink.cep.functions.DynamicPatternFunction;
+import org.apache.flink.cep.pattern.Pattern;
+import org.apache.flink.cep.pattern.conditions.IterativeCondition;
 
 /**
  * @author StephenYou
@@ -34,7 +33,7 @@ import cep.pattern.conditions.IterativeCondition;
 public class DynamicPatternApp {
 
     //测试数据
-    private static final String filePath = "/Users/yqz/project/data.txt";
+    private static final String filePath = "/Users/apple/data/cep_data.txt";
 
     public static void main(String[] args) throws Exception {
         writeToTxt();

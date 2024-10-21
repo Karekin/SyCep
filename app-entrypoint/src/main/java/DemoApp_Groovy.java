@@ -1,25 +1,28 @@
-import java.time.Duration;
-import java.util.List;
-import java.util.Map;
-
+import bean.LoginEvent;
+import groovy.lang.GroovyClassLoader;
+import groovy.lang.GroovyObject;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.java.tuple.Tuple3;
-import org.apache.flink.streaming.api.TimeCharacteristic;
-import org.apache.flink.streaming.api.datastream.KeyedStream;
-import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-
 import org.apache.flink.cep.CEP;
 import org.apache.flink.cep.PatternSelectFunction;
 import org.apache.flink.cep.PatternStream;
 import org.apache.flink.cep.pattern.Pattern;
 import org.apache.flink.cep.pattern.conditions.IterativeCondition;
+import org.apache.flink.streaming.api.TimeCharacteristic;
+import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+
+import java.io.File;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 
 /**
  * @author StephenYou
  * Created on 2023-07-29
  * Description: run for show source code
  */
-public class DemoApp {
+public class DemoApp_Groovy {
     public static void main(String[] args) throws Exception {
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -51,31 +54,15 @@ public class DemoApp {
                 .keyBy(e -> e.f0);
 
 
-        Pattern<Tuple3<String, Long, String>,?> pattern = Pattern
-                .<Tuple3<String, Long, String>>begin("begin")
-                .where(new IterativeCondition<Tuple3<String, Long, String>>() {
-                    @Override
-                    public boolean filter(Tuple3<String, Long, String> value, Context<Tuple3<String, Long, String>> ctx)
-                            throws Exception {
-                        return value.f2.equals("success");
-                    }
-                })
-                .followedByAny("middle")
-                .where(new IterativeCondition<Tuple3<String, Long, String>>() {
-                    @Override
-                    public boolean filter(Tuple3<String, Long, String> value, Context<Tuple3<String, Long, String>> ctx)
-                            throws Exception {
-                        return value.f2.equals("fail");
-                    }
-                })
-                .followedBy("end")
-                .where(new IterativeCondition<Tuple3<String, Long, String>>() {
-                    @Override
-                    public boolean filter(Tuple3<String, Long, String> value, Context<Tuple3<String, Long, String>> ctx)
-                            throws Exception {
-                        return value.f2.equals("end");
-                    }
-                });
+        // 实例化Groovy对象
+        GroovyClassLoader gcl = new GroovyClassLoader();
+        Class groovyClass = gcl.parseClass(new File("app-entrypoint/src/main/resources/pt2.groovy"));
+        GroovyObject groovyObject = (GroovyObject) groovyClass.newInstance();
+
+        // 调用Groovy对象的方法
+        Pattern<Tuple3<String, Long, String>,?> pattern
+                = (Pattern<Tuple3<String, Long, String>, Tuple3<String, Long, String>>) groovyObject.invokeMethod("getP", null);
+
 
         PatternStream patternStream = CEP.pattern(source, pattern);
 
