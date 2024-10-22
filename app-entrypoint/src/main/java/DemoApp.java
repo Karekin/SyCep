@@ -29,18 +29,18 @@ public class DemoApp {
 
 
         KeyedStream<Tuple3<String, Long, String>, String> source = env.fromElements(
-                        new Tuple3<String, Long, String>("1001", 1656914303000L, "success")
-                        , new Tuple3<String, Long, String>("1001", 1656914304000L, "fail")
-                        , new Tuple3<String, Long, String>("1001", 1656914305000L, "fail")
-                        , new Tuple3<String, Long, String>("1001", 1656914306000L, "success")
-                        , new Tuple3<String, Long, String>("1001", 1656914307000L, "fail")
-                        , new Tuple3<String, Long, String>("1001", 1656914308000L, "success")
-                        , new Tuple3<String, Long, String>("1001", 1656914309000L, "fail")
-                        , new Tuple3<String, Long, String>("1001", 1656914310000L, "success")
-                        , new Tuple3<String, Long, String>("1001", 1656914311000L, "fail")
-                        , new Tuple3<String, Long, String>("1001", 1656914312000L, "fail")
-                        , new Tuple3<String, Long, String>("1001", 1656914313000L, "success")
-                        , new Tuple3<String, Long, String>("1001", 1656914314000L, "end")
+                        new Tuple3<>("1001", 1656914303000L, "success")
+                        , new Tuple3<>("1001", 1656914304000L, "fail")
+                        , new Tuple3<>("1001", 1656914305000L, "fail")
+                        , new Tuple3<>("1001", 1656914306000L, "success")
+                        , new Tuple3<>("1001", 1656914307000L, "fail")
+                        , new Tuple3<>("1001", 1656914308000L, "success")
+                        , new Tuple3<>("1001", 1656914309000L, "fail")
+                        , new Tuple3<>("1001", 1656914310000L, "success")
+                        , new Tuple3<>("1001", 1656914311000L, "fail")
+                        , new Tuple3<>("1001", 1656914312000L, "fail")
+                        , new Tuple3<>("1001", 1656914313000L, "success")
+                        , new Tuple3<>("1001", 1656914314000L, "end")
                 )
                 .assignTimestampsAndWatermarks(WatermarkStrategy
                         .<Tuple3<String, Long, String>>forBoundedOutOfOrderness(Duration.ofSeconds(1))
@@ -77,7 +77,7 @@ public class DemoApp {
                     }
                 });
 
-        PatternStream patternStream = CEP.pattern(source, pattern);
+        PatternStream<Tuple3<String, Long, String>> patternStream = CEP.pattern(source, pattern);
 
         patternStream.select(new PatternSelectFunction<Tuple3<String, Long, String>, Map<String, List<Tuple3<String, Long, String>>>>() {
 

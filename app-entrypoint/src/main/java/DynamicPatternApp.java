@@ -3,7 +3,6 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.net.URL;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -65,8 +64,7 @@ public class DynamicPatternApp {
                     @Override
                     public Tuple3<String, Long, String> map(String s) throws Exception {
                         String[] split = s.split(" ");
-                        Tuple3 res = new Tuple3<>(split[0], Long.valueOf(split[1]), split[2]);
-                        return res;
+                        return new Tuple3<>(split[0], Long.valueOf(split[1]), split[2]);
                     }
                 })
         .assignTimestampsAndWatermarks(WatermarkStrategy
@@ -75,7 +73,7 @@ public class DynamicPatternApp {
                     return event.f1;
                 }));
 
-        PatternStream patternStream = CEP.injectionPattern(source, new TestDynamicPatternFunction());
+        PatternStream<Tuple3<String, Long, String>> patternStream = CEP.injectionPattern(source, new TestDynamicPatternFunction());
         patternStream.select(new PatternSelectFunction<Tuple3<String, Long, String>, Map>() {
             @Override
             public Map select(Map map) throws Exception {
