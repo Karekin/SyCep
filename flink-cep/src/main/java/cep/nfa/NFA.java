@@ -106,6 +106,11 @@ public class NFA<T> {
      */
     private final boolean handleTimeout;
 
+//    private final long intervalWindowTime = ConfigManager.getIntervalWindowTime(); // 从配置加载
+
+    private final long intervalWindowTime = 5000; // 指定固定的间隔时间为5秒
+
+
     public NFA(
             final Collection<State<T>> validStates,
             final Map<String, Long> windowTimes,
@@ -266,12 +271,12 @@ public class NFA<T> {
      * @throws Exception Thrown if the system cannot access the state.
      */
     public Tuple2<Collection<Map<String, List<T>>>, Collection<Tuple2<Map<String, List<T>>, Long>>>
-            advanceTime(
-                    final SharedBufferAccessor<T> sharedBufferAccessor,
-                    final NFAState nfaState,
-                    final long timestamp,
-                    final AfterMatchSkipStrategy afterMatchSkipStrategy)
-                    throws Exception {
+    advanceTime(
+            final SharedBufferAccessor<T> sharedBufferAccessor,
+            final NFAState nfaState,
+            final long timestamp,
+            final AfterMatchSkipStrategy afterMatchSkipStrategy)
+            throws Exception {
 
         final List<Map<String, List<T>>> result = new ArrayList<>();
         final Collection<Tuple2<Map<String, List<T>>, Long>> timeoutResult = new ArrayList<>();
@@ -282,54 +287,64 @@ public class NFA<T> {
 
         for (ComputationState computationState : nfaState.getPartialMatches()) {
             String currentStateName = computationState.getCurrentStateName();
+
+            // 判断前一个事件的超时
             boolean isTimeoutForPreviousEvent =
                     windowTimes.containsKey(currentStateName)
                             && isStateTimedOut(
-                                    computationState,
-                                    timestamp,
-                                    computationState.getPreviousTimestamp(),
-                                    windowTimes.get(currentStateName));
+                            computationState,
+                            timestamp,
+                            computationState.getPreviousTimestamp(),
+                            windowTimes.get(currentStateName));
+
+            // 判断第一个事件的超时
             boolean isTimeoutForFirstEvent =
                     isStateTimedOut(
                             computationState,
                             timestamp,
                             computationState.getStartTimestamp(),
                             windowTime);
-            if (isTimeoutForPreviousEvent || isTimeoutForFirstEvent) {
+
+            // 添加间隔超时的判断
+            boolean isIntervalTimeout = isStatePreTimedOut(computationState, timestamp);
+
+            // 如果任何一种超时情况发生
+            if (isTimeoutForPreviousEvent || isTimeoutForFirstEvent || isIntervalTimeout) {
                 nfaState.setStateChanged();
 
                 if (getState(computationState).isPending()) {
-                    // save pending states for after-match pruning, where those states will be
-                    // released
+                    // 保存挂起状态的匹配，稍后进行修剪释放
                     potentialMatches.add(computationState);
                     continue;
                 }
 
                 if (handleTimeout) {
-                    // extract the timed out event pattern
+                    // 提取超时的事件模式
                     Map<String, List<T>> timedOutPattern =
                             sharedBufferAccessor.materializeMatch(
                                     extractCurrentMatches(sharedBufferAccessor, computationState));
-                    timeoutResult.add(
-                            Tuple2.of(
-                                    timedOutPattern,
-                                    isTimeoutForPreviousEvent
-                                            ? computationState.getPreviousTimestamp()
-                                                    + windowTimes.get(
-                                                            computationState.getCurrentStateName())
-                                            : computationState.getStartTimestamp() + windowTime));
+                    long timeoutTimestamp = isTimeoutForPreviousEvent
+                            ? computationState.getPreviousTimestamp() + windowTimes.get(currentStateName)
+                            : computationState.getStartTimestamp() + windowTime;
+
+                    // 如果是间隔超时，则计算间隔超时时间
+                    if (isIntervalTimeout) {
+                        timeoutTimestamp = computationState.getPreviousTimestamp() + intervalWindowTime;
+                    }
+
+                    // 添加到超时结果
+                    timeoutResult.add(Tuple2.of(timedOutPattern, timeoutTimestamp));
                 }
 
-                // release timeout states
-                sharedBufferAccessor.releaseNode(
-                        computationState.getPreviousBufferEntry(), computationState.getVersion());
+                // 释放超时状态
+                sharedBufferAccessor.releaseNode(computationState.getPreviousBufferEntry(), computationState.getVersion());
             } else {
+                // 未超时的状态继续作为部分匹配状态
                 newPartialMatches.add(computationState);
             }
         }
 
-        // If a timeout partial match "frees" some completed matches
-        // Or if completed not-followed-by matches need pruning
+        // 如果超时的部分匹配释放了某些完成的匹配，或完成的非跟随匹配需要修剪
         processMatchesAccordingToSkipStrategy(
                 sharedBufferAccessor,
                 nfaState,
@@ -339,11 +354,26 @@ public class NFA<T> {
                 result);
 
         nfaState.setNewPartialMatches(newPartialMatches);
-
         sharedBufferAccessor.advanceTime(timestamp);
 
         return Tuple2.of(result, timeoutResult);
     }
+
+    /**
+     * 判断两个事件之间的时间间隔是否超时。
+     *
+     * @param computationState 当前的计算状态
+     * @param timestamp 当前时间
+     * @return 如果两个事件之间的间隔超时，返回 true
+     */
+    private boolean isStatePreTimedOut(ComputationState computationState, long timestamp) {
+        // 假设我们定义了一个间隔时间窗口 intervalWindowTime，用于判断两个事件之间的时间间隔是否超时
+        long previousTimestamp = computationState.getPreviousTimestamp();
+        return timestamp - previousTimestamp > intervalWindowTime;
+    }
+
+
+
 
     private boolean isStateTimedOut(
             final ComputationState state,

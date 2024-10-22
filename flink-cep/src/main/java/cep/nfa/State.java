@@ -38,11 +38,13 @@ public class State<T> implements Serializable {
     private static final long serialVersionUID = 6658700025989097781L;
 
     private final String name;
+    private final Long previousWindowTime;
     private StateType stateType;
     private final Collection<StateTransition<T>> stateTransitions;
 
-    public State(final String name, final StateType stateType) {
+    public State(final String name,final Long previousWindowTime, final StateType stateType) {
         this.name = name;
+        this.previousWindowTime = previousWindowTime;
         this.stateType = stateType;
 
         stateTransitions = new ArrayList<>();
@@ -70,6 +72,10 @@ public class State<T> implements Serializable {
 
     public void makeStart() {
         this.stateType = StateType.Start;
+    }
+
+    public Long getPreviousWindowTime() {
+        return previousWindowTime;
     }
 
     public void addStateTransition(

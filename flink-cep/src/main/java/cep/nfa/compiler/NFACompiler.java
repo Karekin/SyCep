@@ -339,7 +339,7 @@ public class NFACompiler {
                     if ((currentPattern.getWindowTime(WithinType.PREVIOUS_AND_CURRENT) != null
                                     || getWindowTime() > 0)
                             && lastSink.isFinal()) {
-                        final State<T> notFollow = createState(State.StateType.Pending, true);
+                        final State<T> notFollow = createState(State.StateType.Pending, , true);
                         final IterativeCondition<T> notCondition = getTakeCondition(currentPattern);
                         final State<T> stopState =
                                 createStopState(notCondition, currentPattern.getName());
@@ -442,9 +442,9 @@ public class NFACompiler {
          * @param stateType the type of the state
          * @return the created state
          */
-        private State<T> createState(String name, State.StateType stateType) {
+        private State<T> createState(String name, Long previousWindowTime, State.StateType stateType) {
             String stateName = stateNameHandler.getUniqueInternalName(name);
-            State<T> state = new State<>(stateName, stateType);
+            State<T> state = new State<>(stateName, previousWindowTime, stateType);
             states.add(state);
             return state;
         }
